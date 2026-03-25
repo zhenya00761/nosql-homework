@@ -4,6 +4,11 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.UUID;
+
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 
@@ -22,8 +27,35 @@ public class RateLimiter {
   }
 
   public boolean pass() {
-    // TODO: Implementation
-    return false;
+
+    String LUA_SCRIPT =
+        "local windowStart = tonumber(ARGV[3]) - (tonumber(ARGV[2]) * 1000)\n" +
+        "redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', windowStart)\n" +
+        "local count = redis.call('ZCARD', KEYS[1])\n" +
+        "if count < tonumber(ARGV[1]) then\n" +
+        "    redis.call('ZADD', KEYS[1], ARGV[3], ARGV[4])\n" +
+        "    redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]) * 2)\n" +
+        "    return 1\n" +
+        "else\n" +
+        "    return 0\n" +
+        "end";
+
+    String key = label;
+    long now = System.currentTimeMillis();
+    String memberId = UUID.randomUUID().toString();
+
+    Long result = (Long) redis.eval(
+        LUA_SCRIPT,
+        List.of(key),
+        Arrays.asList(
+            String.valueOf(maxRequestCount),
+            String.valueOf(timeWindowSeconds),
+            String.valueOf(now),
+            memberId
+        )
+    );
+
+    return result == 1L;
   }
 
   public static void main(String[] args) {
